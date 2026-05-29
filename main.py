@@ -644,6 +644,12 @@ def upgrade():
         flash("STRIPE_PRICE_ID no configurado.", "error")
         return redirect(url_for("precios"))
 
+    user = get_user_by_id(session["user_id"])
+    if not user:
+        session.clear()
+        flash("Sesión expirada. Inicia sesión de nuevo.", "error")
+        return redirect(url_for("login"))
+
     checkout = stripe.checkout.Session.create(
         payment_method_types=["card"],
         line_items=[{"price": price_id, "quantity": 1}],
@@ -651,7 +657,7 @@ def upgrade():
         success_url=url_for("dashboard", _external=True) + "?upgrade=success",
         cancel_url=url_for("precios", _external=True),
         client_reference_id=str(session["user_id"]),
-        customer_email=get_user_by_id(session["user_id"])["email"],
+        customer_email=user["email"],
     )
     return redirect(checkout.url)
 
