@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Importar CSV — Calculo Bank{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <span class="page-title">Importar CSV</span>
+</div>
+
+<div class="card">
+    <p class="card-title">Subir archivo</p>
+    <form method="POST" enctype="multipart/form-data">
+        <label>Archivo CSV (máx. 2 MB)</label>
+        <input type="file" name="archivo" accept=".csv,.txt"
+               style="background:var(--bg); border:1px dashed var(--border); border-radius:8px;
+                      padding:20px; text-align:center; cursor:pointer; margin-bottom:12px;
+                      color:var(--muted); width:100%;">
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+                <label>Etiqueta</label>
+                <input type="text" name="etiqueta" placeholder="Nombre del cálculo">
+            </div>
+            <div>
+                <label>Categoría</label>
+                <input type="text" name="categoria" placeholder="Ej: Ventas, Gastos">
+            </div>
+        </div>
+
+        <label>Notas</label>
+        <input type="text" name="notas" placeholder="Descripción adicional">
+
+        <div class="btn-row" style="margin-top:4px;">
+            <button type="submit" class="btn btn-primary">Importar y calcular</button>
+            <a href="/" class="btn btn-ghost">Cancelar</a>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <p class="card-title">Formatos aceptados</p>
+    <p style="color:var(--muted); font-size:0.88rem; margin-bottom:12px;">
+        El archivo puede tener los números en cualquiera de estos formatos:
+    </p>
+
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+        <div class="stat" style="text-align:left; padding:12px;">
+            <div class="stat-label">Una columna</div>
+            <pre style="color:var(--text); font-size:0.82rem; margin-top:6px;">100
+200
+350
+420</pre>
+        </div>
+        <div class="stat" style="text-align:left; padding:12px;">
+            <div class="stat-label">Una fila con comas</div>
+            <pre style="color:var(--text); font-size:0.82rem; margin-top:6px;">100,200,350,420</pre>
+        </div>
+        <div class="stat" style="text-align:left; padding:12px;">
+            <div class="stat-label">Múltiples columnas</div>
+            <pre style="color:var(--text); font-size:0.82rem; margin-top:6px;">100,200
+350,420
+500,180</pre>
+        </div>
+    </div>
+
+    <p style="color:var(--muted); font-size:0.8rem; margin-top:14px;">
+        Los valores no numéricos (cabeceras, texto) se ignoran automáticamente.
+    </p>
+</div>
+{% endblock %}

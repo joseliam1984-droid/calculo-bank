@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Calculo Bank{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <span class="page-title">Dashboard</span>
+    {% if history %}
+    <a href="/exportar" class="btn btn-success btn-sm">Descargar CSV</a>
+    {% endif %}
+</div>
+
+<!-- FORMULARIO -->
+<div class="card">
+    <p class="card-title">Nuevo cálculo</p>
+    <form method="POST">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+                <label>Etiqueta (opcional)</label>
+                <input type="text" name="etiqueta" value="{{ etiqueta }}" placeholder="Ej: Ventas Enero">
+            </div>
+            <div>
+                <label>Categoría (opcional)</label>
+                <input type="text" name="categoria" value="{{ categoria }}" placeholder="Ej: Finanzas">
+            </div>
+        </div>
+
+        <label>Números (separados por espacios o comas)</label>
+        <textarea name="numbers" placeholder="Ejemplo: 14, 27, 8, 53, 31">{{ raw_input }}</textarea>
+
+        <label>Notas (opcional)</label>
+        <input type="text" name="notas" value="{{ notas }}" placeholder="Contexto adicional...">
+
+        {% if parse_errors %}
+        <div class="flash error" style="margin-top:8px;">
+            Valores ignorados: {{ parse_errors | join(", ") }}
+        </div>
+        {% endif %}
+
+        <div class="btn-row" style="margin-top:12px;">
+            <button type="submit" class="btn btn-primary">Calcular y guardar</button>
+            <button type="submit" name="action" value="clear" class="btn btn-danger"
+                onclick="return confirm('¿Borrar todo tu historial?')">Limpiar todo</button>
+        </div>
+    </form>
+</div>
+
+<!-- RESULTADO -->
+<div class="card">
+    <p class="card-title">
+        Resultado
+        {% if user_submitted %}<span class="badge badge-green" style="margin-left:8px;">Guardado</span>{% endif %}
+    </p>
+
+    <div class="stats-grid">
+        <div class="stat"><div class="stat-label">Promedio</div><div class="stat-value">{{ average }}</div></div>
+        <div class="stat"><div class="stat-label">Total</div><div class="stat-value">{{ total }}</div></div>
+        <div class="stat"><div class="stat-label">Cantidad</div><div class="stat-value">{{ count }}</div></div>
+        <div class="stat"><div class="stat-label">Mínimo</div><div class="stat-value green">{{ minimo }}</div></div>
+        <div class="stat"><div class="stat-label">Máximo</div><div class="stat-value yellow">{{ maximo }}</div></div>
+        <div class="stat"><div class="stat-label">Mediana</div><div class="stat-value">{{ mediana }}</div></div>
+    </div>
+
+    <div class="num-tags">
+        {% for n in numbers %}
+        <span class="num-tag">{{ n }}</span>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- GRÁFICA -->
+{% if chart_averages %}
+<div class="card">
+    <p class="card-title">Evolución de promedios</p>
+    <div class="chart-wrap"><canvas id="chartPromedios"></canvas></div>
+</div>
+{% endif %}
+
+<!-- HISTORIAL -->
+<div class="card">
+    <p class="card-title">Historial — {{ history | length }} registros</p>
+
+    <!-- BÚSQUEDA -->
+    <form method="GET" class="search-row">
+        <input type="text" name="buscar" value="{{ buscar_q }}" placeholder="Buscar por etiqueta o notas...">
+        <select name="categoria">
+            <option value="">Todas las categorías</option>
+            {% for cat in categorias %}
+            <option value="{{ cat }}" {% if cat == cat_filter %}selected{% endif %}>{{ cat }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-ghost btn-sm">Filtrar</button>
+        {% if buscar_q or cat_filter %}
+        <a href="/" class="btn btn-ghost btn-sm">✕ Limpiar</a>
+        {% endif %}
+    </form>
+
+    {% if history %}
+    <div style="overflow-x:auto;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Etiqueta</th>
+                    <th>Categoría</th>
+                    <th>Promedio</th>
+                    <th>Min</th>
+                    <th>Max</th>
+                    <th>Mediana</th>
+                    <th>Cant.</th>
+                    <th>Fecha</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in history %}
+                <tr>
+                    <td>
+                        <span class="badge badge-blue">{{ e.etiqueta }}</span>
+                        {% if e.notas %}<br><small style="color:var(--muted);">{{ e.notas[:60] }}</small>{% endif %}
+                    </td>
+                    <td><span class="badge badge-gray">{{ e.categoria }}</span></td>
+                    <td>{{ e.average }}</td>
+                    <td>{{ e.min }}</td>
+                    <td>{{ e.max }}</td>
+                    <td>{{ e.median }}</td>
+                    <td>{{ e.count }}</td>
+                    <td style="white-space:nowrap; color:var(--muted);">{{ e.fecha }}</td>
+                    <td>
+                        <form method="POST" action="/eliminar/{{ e.id }}"
+                              onsubmit="return confirm('¿Eliminar este registro?')">
+                            <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger);">✕</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="empty">
+        {% if buscar_q or cat_filter %}Sin resultados para ese filtro.{% else %}No hay cálculos todavía.{% endif %}
+    </p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if chart_averages %}
+<script>
+new Chart(document.getElementById('chartPromedios').getContext('2d'), {
+    type: 'bar',
+    data: {
+        labels: {{ chart_labels | tojson }},
+        datasets: [{
+            label: 'Promedio',
+            data: {{ chart_averages | tojson }},
+            backgroundColor: 'rgba(56,189,248,0.45)',
+            borderColor: '#38bdf8',
+            borderWidth: 2,
+            borderRadius: 5,
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51,65,85,0.4)' } },
+            y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51,65,85,0.4)' } }
+        }
+    }
+});
+</script>
+{% endif %}
+{% endblock %}

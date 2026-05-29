@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Métricas — Calculo Bank{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <span class="page-title">Métricas</span>
+</div>
+
+{% if m.total_calcs == 0 %}
+<div class="card"><p class="empty">Aún no tienes cálculos. Ve al Dashboard y empieza.</p></div>
+{% else %}
+
+<!-- STATS GENERALES -->
+<div class="card">
+    <p class="card-title">Resumen general</p>
+    <div class="stats-grid">
+        <div class="stat">
+            <div class="stat-label">Total cálculos</div>
+            <div class="stat-value">{{ m.total_calcs }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Promedio global</div>
+            <div class="stat-value">{{ m.avg_of_avgs }}</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Categorías</div>
+            <div class="stat-value">{{ m.by_cat | length }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- MEJOR Y PEOR -->
+{% if m.best or m.worst %}
+<div class="card">
+    <p class="card-title">Destacados</p>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        {% if m.best %}
+        <div class="stat">
+            <div class="stat-label">Mayor promedio</div>
+            <div class="stat-value green">{{ m.best.promedio }}</div>
+            <div style="font-size:0.78rem; color:var(--muted); margin-top:4px;">{{ m.best.etiqueta }}</div>
+        </div>
+        {% endif %}
+        {% if m.worst %}
+        <div class="stat">
+            <div class="stat-label">Menor promedio</div>
+            <div class="stat-value yellow">{{ m.worst.promedio }}</div>
+            <div style="font-size:0.78rem; color:var(--muted); margin-top:4px;">{{ m.worst.etiqueta }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- GRÁFICA EVOLUCIÓN -->
+{% if m.evolution %}
+<div class="card">
+    <p class="card-title">Evolución de promedios (últimos 30 días)</p>
+    <div class="chart-wrap"><canvas id="chartEvolucion"></canvas></div>
+</div>
+{% endif %}
+
+<!-- GRÁFICA POR CATEGORÍA -->
+{% if m.by_cat %}
+<div class="card">
+    <p class="card-title">Cálculos por categoría</p>
+    <div class="chart-wrap"><canvas id="chartCat"></canvas></div>
+
+    <table style="margin-top:16px;">
+        <thead>
+            <tr><th>Categoría</th><th>Cálculos</th><th>Promedio promedio</th></tr>
+        </thead>
+        <tbody>
+            {% for row in m.by_cat %}
+            <tr>
+                <td><span class="badge badge-purple">{{ row.cat }}</span></td>
+                <td>{{ row.count }}</td>
+                <td>{{ row.avg }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if m.evolution %}
+<script>
+new Chart(document.getElementById('chartEvolucion').getContext('2d'), {
+    type: 'line',
+    data: {
+        labels: {{ m.evolution | map(attribute='fecha') | list | tojson }},
+        datasets: [{
+            label: 'Promedio',
+            data: {{ m.evolution | map(attribute='avg') | list | tojson }},
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56,189,248,0.1)',
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointBackgroundColor: '#38bdf8',
+        }]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51,65,85,0.4)' } },
+            y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(51,65,85,0.4)' } }
+        }
+    }
+});
+</script>
+{% endif %}
+{% if m.by_cat %}
+<script>
+new Chart(document.getElementById('chartCat').getContext('2d'), {
+    type: 'doughnut',
+    data: {
+        labels: {{ m.by_cat | map(attribute='cat') | list | tojson }},
+        datasets: [{
+            data: {{ m.by_cat | map(attribute='count') | list | tojson }},
+            backgroundColor: ['#38bdf8','#4ade80','#facc15','#f472b6','#a78bfa','#fb923c'],
+            borderWidth: 2,
+            borderColor: 'var(--surface)',
+        }]
+    },
+    options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'right', labels: { color: '#94a3b8', padding: 16 } }
+        }
+    }
+});
+</script>
+{% endif %}
+{% endblock %}

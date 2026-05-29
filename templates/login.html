@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Iniciar sesión — Calculo Bank</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px 16px;
+        }
+
+        .auth-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 40px 36px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        h1 { font-size: 1.5rem; color: #38bdf8; margin-bottom: 4px; }
+        .subtitle { color: #64748b; font-size: 0.9rem; margin-bottom: 28px; }
+
+        label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 6px; }
+
+        input {
+            width: 100%;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #e2e8f0;
+            padding: 12px;
+            font-size: 1rem;
+            outline: none;
+            margin-bottom: 16px;
+            transition: border-color 0.2s;
+        }
+
+        input:focus { border-color: #38bdf8; }
+
+        button {
+            width: 100%;
+            background: #38bdf8;
+            color: #0f172a;
+            border: none;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 4px;
+            transition: opacity 0.2s;
+        }
+
+        button:hover { opacity: 0.85; }
+
+        .flash {
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 0.88rem;
+            margin-bottom: 16px;
+        }
+
+        .flash.error   { background: #450a0a; border: 1px solid #ef4444; color: #fca5a5; }
+        .flash.success { background: #052e16; border: 1px solid #16a34a; color: #4ade80; }
+
+        .footer-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.88rem;
+            color: #64748b;
+        }
+
+        .footer-link a { color: #38bdf8; text-decoration: none; }
+        .footer-link a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+<div class="auth-card">
+    <h1>Calculo Bank</h1>
+    <p class="subtitle">Inicia sesión para continuar</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <form method="POST">
+        <label>Correo electrónico</label>
+        <input type="email" name="email" placeholder="tu@correo.com" required autocomplete="email">
+
+        <label>Contraseña</label>
+        <input type="password" name="password" placeholder="••••••••" required>
+
+        <button type="submit">Entrar</button>
+    </form>
+
+    <p class="footer-link">
+        ¿No tienes cuenta? <a href="/registro">Regístrate gratis</a>
+    </p>
+</div>
+</body>
+</html>
