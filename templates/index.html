@@ -2,6 +2,30 @@
 {% block title %}Dashboard — Calculo Bank{% endblock %}
 
 {% block content %}
+
+{% if limite_alcanzado %}
+<div style="background:#2e1065; border:1px solid #7c3aed; border-radius:10px;
+            padding:14px 18px; margin-bottom:20px; display:flex;
+            justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+    <p style="color:#e9d5ff; font-size:0.9rem;">
+        Usaste los <strong>{{ free_limit }} cálculos</strong> del plan Free este mes.
+        Actualiza a Pro para seguir sin límites.
+    </p>
+    <a href="/precios" class="btn btn-sm" style="background:#7c3aed; color:#fff; white-space:nowrap;">
+        Ver planes →
+    </a>
+</div>
+{% elif plan == 'free' %}
+<div style="background:var(--surface); border:1px solid var(--border); border-radius:10px;
+            padding:10px 16px; margin-bottom:16px; display:flex;
+            justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+    <p style="color:var(--muted); font-size:0.82rem;">
+        Plan Free · <strong style="color:var(--text);">{{ calcs_mes }} / {{ free_limit }}</strong> cálculos este mes
+    </p>
+    <a href="/precios" style="font-size:0.78rem; color:#a78bfa; text-decoration:none;">Upgrade a Pro →</a>
+</div>
+{% endif %}
+
 <div class="page-header">
     <span class="page-title">Dashboard</span>
     {% if history %}

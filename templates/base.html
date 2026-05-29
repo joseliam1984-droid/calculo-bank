@@ -262,8 +262,19 @@
     <a href="/metricas" {% if request.endpoint == 'metricas' %}class="active"{% endif %}>Métricas</a>
     <a href="/importar" {% if request.endpoint == 'importar' %}class="active"{% endif %}>Importar CSV</a>
     <a href="/perfil" {% if request.endpoint == 'perfil' %}class="active"{% endif %}>Perfil</a>
+    <a href="/precios" {% if request.endpoint == 'precios' %}class="active"{% endif %}>Precios</a>
     <div class="nav-right">
         <button class="theme-btn" onclick="toggleTheme()">☀ / ☾</button>
+        {% if plan is defined %}
+            {% if plan == 'pro' %}
+            <span class="badge badge-purple" style="font-size:0.72rem;">PRO</span>
+            {% else %}
+            <a href="/precios" style="font-size:0.78rem; background:#2e1065; color:#c4b5fd;
+               border-radius:5px; padding:3px 10px; text-decoration:none; font-weight:600;">
+               Free → Upgrade
+            </a>
+            {% endif %}
+        {% endif %}
         <span class="nav-user">{{ user_name }}</span>
         <a class="nav-logout" href="/logout">Salir</a>
     </div>

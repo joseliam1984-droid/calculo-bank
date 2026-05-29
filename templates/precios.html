@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Precios — Calculo Bank{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <span class="page-title">Elige tu plan</span>
+</div>
+
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:580px; margin:0 auto;">
+
+    <!-- PLAN FREE -->
+    <div class="card" style="border-color:{% if plan=='free' %}var(--accent){% else %}var(--border){% endif %};">
+        {% if plan == 'free' %}
+        <span class="badge badge-blue" style="margin-bottom:12px; display:inline-block;">Tu plan actual</span>
+        {% endif %}
+        <p style="font-size:1.1rem; font-weight:700; margin-bottom:4px;">Free</p>
+        <p style="font-size:2rem; font-weight:700; color:var(--accent); margin-bottom:4px;">$0</p>
+        <p style="font-size:0.8rem; color:var(--muted); margin-bottom:20px;">para siempre</p>
+
+        <ul style="list-style:none; font-size:0.88rem; color:var(--text); line-height:2;">
+            <li>✅ 30 cálculos por mes</li>
+            <li>✅ Estadísticas completas</li>
+            <li>✅ Historial (últimos 50)</li>
+            <li>✅ Exportar CSV</li>
+            <li>✅ Gráficas básicas</li>
+            <li style="color:var(--muted);">✗ Importar CSV</li>
+            <li style="color:var(--muted);">✗ API REST</li>
+            <li style="color:var(--muted);">✗ Métricas avanzadas</li>
+            <li style="color:var(--muted);">✗ Cálculos ilimitados</li>
+        </ul>
+    </div>
+
+    <!-- PLAN PRO -->
+    <div class="card" style="border-color:{% if plan=='pro' %}var(--accent){% else %}#7c3aed{% endif %}; position:relative;">
+        <div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%);
+                    background:#7c3aed; color:#fff; border-radius:20px;
+                    padding:3px 14px; font-size:0.75rem; font-weight:700; white-space:nowrap;">
+            MÁS POPULAR
+        </div>
+
+        {% if plan == 'pro' %}
+        <span class="badge badge-green" style="margin-bottom:12px; display:inline-block;">Tu plan actual</span>
+        {% else %}
+        <div style="height:28px;"></div>
+        {% endif %}
+
+        <p style="font-size:1.1rem; font-weight:700; margin-bottom:4px;">Pro</p>
+        <p style="font-size:2rem; font-weight:700; color:#a78bfa; margin-bottom:2px;">$99 MXN</p>
+        <p style="font-size:0.8rem; color:var(--muted); margin-bottom:20px;">por mes · cancela cuando quieras</p>
+
+        <ul style="list-style:none; font-size:0.88rem; color:var(--text); line-height:2;">
+            <li>✅ Cálculos <strong>ilimitados</strong></li>
+            <li>✅ Estadísticas completas</li>
+            <li>✅ Historial ilimitado</li>
+            <li>✅ Exportar CSV</li>
+            <li>✅ Gráficas avanzadas</li>
+            <li>✅ Importar CSV</li>
+            <li>✅ API REST con JSON</li>
+            <li>✅ Métricas y tendencias</li>
+            <li>✅ Soporte prioritario</li>
+        </ul>
+
+        {% if plan != 'pro' %}
+        <div style="margin-top:20px;">
+            {% if stripe_configured %}
+            <a href="/upgrade" class="btn btn-primary" style="background:#7c3aed; width:100%; justify-content:center;">
+                Actualizar a Pro →
+            </a>
+            {% else %}
+            <p style="font-size:0.8rem; color:var(--muted); text-align:center;">
+                Pagos próximamente disponibles
+            </p>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- GARANTIA -->
+<div style="text-align:center; margin-top:28px; color:var(--muted); font-size:0.85rem;">
+    <p>💳 Pago seguro con Stripe · 🔒 Cancela en cualquier momento · 📧 Soporte en 24h</p>
+</div>
+
+<!-- FAQ -->
+<div class="card" style="margin-top:24px; max-width:580px; margin-left:auto; margin-right:auto;">
+    <p class="card-title">Preguntas frecuentes</p>
+
+    <div style="border-bottom:1px solid var(--border); padding:12px 0;">
+        <p style="font-weight:600; margin-bottom:4px;">¿Puedo cancelar cuando quiera?</p>
+        <p style="color:var(--muted); font-size:0.88rem;">Sí. Cancelas desde tu perfil o escribiéndonos. Sin penalidades.</p>
+    </div>
+    <div style="border-bottom:1px solid var(--border); padding:12px 0;">
+        <p style="font-weight:600; margin-bottom:4px;">¿Qué pasa con mis datos si cancelo?</p>
+        <p style="color:var(--muted); font-size:0.88rem;">Tus datos se mantienen. Pasas al plan Free con las restricciones normales.</p>
+    </div>
+    <div style="padding:12px 0;">
+        <p style="font-weight:600; margin-bottom:4px;">¿Aceptan MercadoPago u OXXO?</p>
+        <p style="color:var(--muted); font-size:0.88rem;">Por ahora solo tarjeta vía Stripe. MercadoPago está en el roadmap.</p>
+    </div>
+</div>
+{% endblock %}

@@ -7,13 +7,19 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask import (Flask, render_template, request, redirect,
                    url_for, Response, session, flash, jsonify)
+import stripe
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-prod")
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024  # 2 MB max upload
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
 DEFAULT_NUMBERS = [14, 27, 8, 53, 31, 19, 42, 6, 75, 22]
 DB_PATH = "calculo_bank.db"
+
+# Límites del plan Free
+FREE_CALCS_POR_MES = 30
 
 
 # ── BASE DE DATOS ──────────────────────────────────────────────────────────────
@@ -49,19 +55,30 @@ def init_db():
     """)
     con.commit()
     for col, dfn in [
-        ("usuario_id", "INTEGER NOT NULL DEFAULT 0"),
-        ("etiqueta",   "TEXT DEFAULT ''"),
-        ("categoria",  "TEXT DEFAULT ''"),
-        ("notas",      "TEXT DEFAULT ''"),
-        ("minimo",     "REAL DEFAULT 0"),
-        ("maximo",     "REAL DEFAULT 0"),
-        ("mediana",    "REAL DEFAULT 0"),
+        ("usuario_id",         "INTEGER NOT NULL DEFAULT 0"),
+        ("etiqueta",           "TEXT DEFAULT ''"),
+        ("categoria",          "TEXT DEFAULT ''"),
+        ("notas",              "TEXT DEFAULT ''"),
+        ("minimo",             "REAL DEFAULT 0"),
+        ("maximo",             "REAL DEFAULT 0"),
+        ("mediana",            "REAL DEFAULT 0"),
     ]:
         try:
             con.execute(f"ALTER TABLE calculos ADD COLUMN {col} {dfn}")
             con.commit()
         except sqlite3.OperationalError:
             pass
+
+    for col, dfn in [
+        ("plan",               "TEXT DEFAULT 'free'"),
+        ("stripe_customer_id", "TEXT DEFAULT ''"),
+    ]:
+        try:
+            con.execute(f"ALTER TABLE usuarios ADD COLUMN {col} {dfn}")
+            con.commit()
+        except sqlite3.OperationalError:
+            pass
+
     con.close()
 
 
@@ -98,6 +115,42 @@ def get_user_by_id(user_id):
     ).fetchone()
     con.close()
     return {"id": row[0], "nombre": row[1], "email": row[2]} if row else None
+
+
+def get_user_plan(usuario_id):
+    con = sqlite3.connect(DB_PATH)
+    row = con.execute("SELECT plan FROM usuarios WHERE id=?", (usuario_id,)).fetchone()
+    con.close()
+    return row[0] if row else "free"
+
+
+def set_user_pro(usuario_id, stripe_customer_id=""):
+    con = sqlite3.connect(DB_PATH)
+    con.execute(
+        "UPDATE usuarios SET plan='pro', stripe_customer_id=? WHERE id=?",
+        (stripe_customer_id, usuario_id)
+    )
+    con.commit()
+    con.close()
+
+
+def set_user_free(usuario_id):
+    con = sqlite3.connect(DB_PATH)
+    con.execute("UPDATE usuarios SET plan='free' WHERE id=?", (usuario_id,))
+    con.commit()
+    con.close()
+
+
+def get_calculos_este_mes(usuario_id):
+    con = sqlite3.connect(DB_PATH)
+    count = con.execute(
+        """SELECT COUNT(*) FROM calculos
+           WHERE usuario_id=?
+           AND strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', 'localtime')""",
+        (usuario_id,)
+    ).fetchone()[0]
+    con.close()
+    return count
 
 
 def update_user(user_id, nombre, email, new_password=None):
@@ -344,6 +397,10 @@ def dashboard():
     parse_errors = []
     user_submitted = False
 
+    plan           = get_user_plan(user_id)
+    calcs_mes      = get_calculos_este_mes(user_id)
+    limite_alcanzado = plan == "free" and calcs_mes >= FREE_CALCS_POR_MES
+
     if request.method == "POST":
         if request.form.get("action") == "clear":
             clear_history(user_id)
@@ -356,14 +413,18 @@ def dashboard():
         parsed, parse_errors = parse_numbers(raw_input)
 
         if parsed:
-            numbers = parsed
-            user_submitted = True
-            avg, minimo, maximo, mediana, total = calculate_stats(numbers)
-            save_calculo(
-                usuario_id=user_id, etiqueta=etiqueta, categoria=categoria,
-                notas=notas, entrada=raw_input, cantidad=len(numbers),
-                total=total, promedio=avg, minimo=minimo, maximo=maximo, mediana=mediana,
-            )
+            if limite_alcanzado:
+                flash(f"Alcanzaste los {FREE_CALCS_POR_MES} cálculos del plan Free este mes. Actualiza a Pro para continuar.", "upgrade")
+            else:
+                numbers = parsed
+                user_submitted = True
+                avg, minimo, maximo, mediana, total = calculate_stats(numbers)
+                save_calculo(
+                    usuario_id=user_id, etiqueta=etiqueta, categoria=categoria,
+                    notas=notas, entrada=raw_input, cantidad=len(numbers),
+                    total=total, promedio=avg, minimo=minimo, maximo=maximo, mediana=mediana,
+                )
+                calcs_mes += 1
 
     buscar_q   = request.args.get("buscar", "").strip()
     cat_filter = request.args.get("categoria", "").strip()
@@ -385,6 +446,9 @@ def dashboard():
         buscar_q=buscar_q, cat_filter=cat_filter,
         chart_labels=chart_labels, chart_averages=chart_averages,
         user_name=session.get("user_name", ""),
+        plan=plan, calcs_mes=calcs_mes,
+        limite_alcanzado=limite_alcanzado,
+        free_limit=FREE_CALCS_POR_MES,
     )
 
 
@@ -511,6 +575,71 @@ def exportar():
     resp = Response(output.getvalue(), mimetype="text/csv")
     resp.headers["Content-Disposition"] = "attachment; filename=calculo_bank.csv"
     return resp
+
+
+@app.route("/precios")
+def precios():
+    plan = get_user_plan(session["user_id"]) if "user_id" in session else "free"
+    return render_template("precios.html",
+        user_name=session.get("user_name", ""),
+        plan=plan,
+        stripe_configured=bool(stripe.api_key),
+    )
+
+
+@app.route("/upgrade")
+@login_required
+def upgrade():
+    if not stripe.api_key:
+        flash("Los pagos no están configurados todavía.", "error")
+        return redirect(url_for("precios"))
+
+    price_id = os.environ.get("STRIPE_PRICE_ID", "")
+    if not price_id:
+        flash("STRIPE_PRICE_ID no configurado.", "error")
+        return redirect(url_for("precios"))
+
+    checkout = stripe.checkout.Session.create(
+        payment_method_types=["card"],
+        line_items=[{"price": price_id, "quantity": 1}],
+        mode="subscription",
+        success_url=url_for("dashboard", _external=True) + "?upgrade=success",
+        cancel_url=url_for("precios", _external=True),
+        client_reference_id=str(session["user_id"]),
+        customer_email=get_user_by_id(session["user_id"])["email"],
+    )
+    return redirect(checkout.url)
+
+
+@app.route("/webhook", methods=["POST"])
+def stripe_webhook():
+    payload        = request.get_data()
+    sig_header     = request.headers.get("Stripe-Signature", "")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except Exception:
+        return "Invalid signature", 400
+
+    if event["type"] in ("checkout.session.completed", "invoice.paid"):
+        obj     = event["data"]["object"]
+        user_id = int(obj.get("client_reference_id") or 0)
+        if user_id:
+            set_user_pro(user_id, obj.get("customer", ""))
+
+    elif event["type"] in ("customer.subscription.deleted", "invoice.payment_failed"):
+        customer_id = event["data"]["object"].get("customer", "")
+        if customer_id:
+            con = sqlite3.connect(DB_PATH)
+            row = con.execute(
+                "SELECT id FROM usuarios WHERE stripe_customer_id=?", (customer_id,)
+            ).fetchone()
+            con.close()
+            if row:
+                set_user_free(row[0])
+
+    return "ok", 200
 
 
 @app.route("/api/calculos")
