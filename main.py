@@ -9,6 +9,42 @@ from flask import (Flask, render_template, request, redirect,
                    url_for, Response, session, flash, jsonify)
 import stripe
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+USE_POSTGRES  = bool(DATABASE_URL)
+DB_PATH       = "calculo_bank.db"
+
+if USE_POSTGRES:
+    import psycopg2
+    import psycopg2.extras
+
+def get_conn():
+    if USE_POSTGRES:
+        return psycopg2.connect(DATABASE_URL)
+    return sqlite3.connect(DB_PATH)
+
+def PH(n=1):
+    """Devuelve n placeholders: %s para Postgres, ? para SQLite."""
+    p = "%s" if USE_POSTGRES else "?"
+    return ", ".join([p] * n)
+
+def now_sql():
+    return "NOW()" if USE_POSTGRES else "datetime('now','localtime')"
+
+def month_match_sql(col):
+    if USE_POSTGRES:
+        return f"TO_CHAR({col}, 'YYYY-MM') = TO_CHAR(NOW(), 'YYYY-MM')"
+    return f"strftime('%Y-%m', {col}) = strftime('%Y-%m', 'now', 'localtime')"
+
+def date_sql(col):
+    return f"DATE({col})"
+
+def serial_pk():
+    return "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+def rows_to_dicts(cursor, rows):
+    cols = [d[0] for d in cursor.description]
+    return [dict(zip(cols, r)) for r in rows]
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-prod")
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
@@ -16,7 +52,6 @@ app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
 DEFAULT_NUMBERS = [14, 27, 8, 53, 31, 19, 42, 6, 75, 22]
-DB_PATH = "calculo_bank.db"
 
 # Límites del plan Free
 FREE_CALCS_POR_MES = 30
@@ -25,19 +60,22 @@ FREE_CALCS_POR_MES = 30
 # ── BASE DE DATOS ──────────────────────────────────────────────────────────────
 
 def init_db():
-    con = sqlite3.connect(DB_PATH)
-    con.execute("""
+    con = get_conn()
+    cur = con.cursor()
+    cur.execute(f"""
         CREATE TABLE IF NOT EXISTS usuarios (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            id            {serial_pk()},
             nombre        TEXT NOT NULL,
             email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            fecha         TEXT DEFAULT (datetime('now','localtime'))
+            plan          TEXT DEFAULT 'free',
+            stripe_customer_id TEXT DEFAULT '',
+            fecha         TEXT DEFAULT ({now_sql()})
         )
     """)
-    con.execute("""
+    cur.execute(f"""
         CREATE TABLE IF NOT EXISTS calculos (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            id          {serial_pk()},
             usuario_id  INTEGER NOT NULL DEFAULT 0,
             etiqueta    TEXT DEFAULT '',
             categoria   TEXT DEFAULT '',
@@ -49,145 +87,148 @@ def init_db():
             minimo      REAL NOT NULL,
             maximo      REAL NOT NULL,
             mediana     REAL NOT NULL,
-            fecha       TEXT DEFAULT (datetime('now','localtime')),
-            FOREIGN KEY (usuario_id) REFERENCES usuarios(id)
+            fecha       TEXT DEFAULT ({now_sql()})
         )
     """)
     con.commit()
-    for col, dfn in [
-        ("usuario_id",         "INTEGER NOT NULL DEFAULT 0"),
-        ("etiqueta",           "TEXT DEFAULT ''"),
-        ("categoria",          "TEXT DEFAULT ''"),
-        ("notas",              "TEXT DEFAULT ''"),
-        ("minimo",             "REAL DEFAULT 0"),
-        ("maximo",             "REAL DEFAULT 0"),
-        ("mediana",            "REAL DEFAULT 0"),
-    ]:
+    # Migracion segura para columnas faltantes
+    migrations = [
+        ("calculos", "usuario_id",  "INTEGER NOT NULL DEFAULT 0"),
+        ("calculos", "etiqueta",    "TEXT DEFAULT ''"),
+        ("calculos", "categoria",   "TEXT DEFAULT ''"),
+        ("calculos", "notas",       "TEXT DEFAULT ''"),
+        ("calculos", "minimo",      "REAL DEFAULT 0"),
+        ("calculos", "maximo",      "REAL DEFAULT 0"),
+        ("calculos", "mediana",     "REAL DEFAULT 0"),
+        ("usuarios", "plan",        "TEXT DEFAULT 'free'"),
+        ("usuarios", "stripe_customer_id", "TEXT DEFAULT ''"),
+    ]
+    for table, col, dfn in migrations:
         try:
-            con.execute(f"ALTER TABLE calculos ADD COLUMN {col} {dfn}")
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {dfn}")
             con.commit()
-        except sqlite3.OperationalError:
-            pass
-
-    for col, dfn in [
-        ("plan",               "TEXT DEFAULT 'free'"),
-        ("stripe_customer_id", "TEXT DEFAULT ''"),
-    ]:
-        try:
-            con.execute(f"ALTER TABLE usuarios ADD COLUMN {col} {dfn}")
-            con.commit()
-        except sqlite3.OperationalError:
-            pass
-
+        except Exception:
+            con.rollback() if USE_POSTGRES else None
+    cur.close()
     con.close()
 
 
 # ── USUARIOS ───────────────────────────────────────────────────────────────────
 
 def create_user(nombre, email, password):
-    con = sqlite3.connect(DB_PATH)
+    con = get_conn()
+    cur = con.cursor()
     try:
-        con.execute(
-            "INSERT INTO usuarios (nombre, email, password_hash) VALUES (?,?,?)",
+        p = "%s" if USE_POSTGRES else "?"
+        cur.execute(
+            f"INSERT INTO usuarios (nombre, email, password_hash) VALUES ({p},{p},{p})",
             (nombre, email, generate_password_hash(password))
         )
         con.commit()
         return True, None
-    except sqlite3.IntegrityError:
+    except Exception:
+        con.rollback() if USE_POSTGRES else None
         return False, "Ese correo ya tiene una cuenta registrada."
     finally:
-        con.close()
+        cur.close(); con.close()
 
 
 def get_user_by_email(email):
-    con = sqlite3.connect(DB_PATH)
-    row = con.execute(
-        "SELECT id, nombre, email, password_hash FROM usuarios WHERE email = ?", (email,)
-    ).fetchone()
-    con.close()
+    con = get_conn()
+    cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(
+        f"SELECT id, nombre, email, password_hash FROM usuarios WHERE email = {p}", (email,)
+    )
+    row = cur.fetchone()
+    cur.close(); con.close()
     return {"id": row[0], "nombre": row[1], "email": row[2], "password_hash": row[3]} if row else None
 
 
 def get_user_by_id(user_id):
-    con = sqlite3.connect(DB_PATH)
-    row = con.execute(
-        "SELECT id, nombre, email FROM usuarios WHERE id = ?", (user_id,)
-    ).fetchone()
-    con.close()
+    con = get_conn()
+    cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"SELECT id, nombre, email FROM usuarios WHERE id = {p}", (user_id,))
+    row = cur.fetchone()
+    cur.close(); con.close()
     return {"id": row[0], "nombre": row[1], "email": row[2]} if row else None
 
 
 def get_user_plan(usuario_id):
-    con = sqlite3.connect(DB_PATH)
-    row = con.execute("SELECT plan FROM usuarios WHERE id=?", (usuario_id,)).fetchone()
-    con.close()
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"SELECT plan FROM usuarios WHERE id={p}", (usuario_id,))
+    row = cur.fetchone()
+    cur.close(); con.close()
     return row[0] if row else "free"
 
 
 def set_user_pro(usuario_id, stripe_customer_id=""):
-    con = sqlite3.connect(DB_PATH)
-    con.execute(
-        "UPDATE usuarios SET plan='pro', stripe_customer_id=? WHERE id=?",
-        (stripe_customer_id, usuario_id)
-    )
-    con.commit()
-    con.close()
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"UPDATE usuarios SET plan='pro', stripe_customer_id={p} WHERE id={p}",
+                (stripe_customer_id, usuario_id))
+    con.commit(); cur.close(); con.close()
 
 
 def set_user_free(usuario_id):
-    con = sqlite3.connect(DB_PATH)
-    con.execute("UPDATE usuarios SET plan='free' WHERE id=?", (usuario_id,))
-    con.commit()
-    con.close()
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"UPDATE usuarios SET plan='free' WHERE id={p}", (usuario_id,))
+    con.commit(); cur.close(); con.close()
 
 
 def get_calculos_este_mes(usuario_id):
-    con = sqlite3.connect(DB_PATH)
-    count = con.execute(
-        """SELECT COUNT(*) FROM calculos
-           WHERE usuario_id=?
-           AND strftime('%Y-%m', fecha) = strftime('%Y-%m', 'now', 'localtime')""",
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(
+        f"SELECT COUNT(*) FROM calculos WHERE usuario_id={p} AND {month_match_sql('fecha')}",
         (usuario_id,)
-    ).fetchone()[0]
-    con.close()
+    )
+    count = cur.fetchone()[0]
+    cur.close(); con.close()
     return count
 
 
 def update_user(user_id, nombre, email, new_password=None):
-    con = sqlite3.connect(DB_PATH)
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
     try:
         if new_password:
-            con.execute(
-                "UPDATE usuarios SET nombre=?, email=?, password_hash=? WHERE id=?",
+            cur.execute(
+                f"UPDATE usuarios SET nombre={p}, email={p}, password_hash={p} WHERE id={p}",
                 (nombre, email, generate_password_hash(new_password), user_id)
             )
         else:
-            con.execute(
-                "UPDATE usuarios SET nombre=?, email=? WHERE id=?",
+            cur.execute(
+                f"UPDATE usuarios SET nombre={p}, email={p} WHERE id={p}",
                 (nombre, email, user_id)
             )
         con.commit()
         return True, None
-    except sqlite3.IntegrityError:
+    except Exception:
+        con.rollback() if USE_POSTGRES else None
         return False, "Ese correo ya está en uso por otra cuenta."
     finally:
-        con.close()
+        cur.close(); con.close()
 
 
 # ── CÁLCULOS ───────────────────────────────────────────────────────────────────
 
 def save_calculo(usuario_id, etiqueta, categoria, notas, entrada,
                  cantidad, total, promedio, minimo, maximo, mediana):
-    con = sqlite3.connect(DB_PATH)
-    con.execute(
-        """INSERT INTO calculos
+    con = get_conn(); cur = con.cursor()
+    ph = "%s" if USE_POSTGRES else "?"
+    vals = ",".join([ph]*11)
+    cur.execute(
+        f"""INSERT INTO calculos
            (usuario_id,etiqueta,categoria,notas,entrada,cantidad,total,promedio,minimo,maximo,mediana)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+           VALUES ({vals})""",
         (usuario_id, etiqueta, categoria, notas, entrada,
          cantidad, total, promedio, minimo, maximo, mediana)
     )
-    con.commit()
-    con.close()
+    con.commit(); cur.close(); con.close()
 
 
 def _row_to_dict(r):
@@ -195,106 +236,111 @@ def _row_to_dict(r):
         "id": r[0], "etiqueta": r[1] or "Sin etiqueta",
         "categoria": r[2] or "General", "notas": r[3] or "",
         "input": r[4], "count": r[5], "total": r[6],
-        "average": r[7], "min": r[8], "max": r[9], "median": r[10], "fecha": r[11],
+        "average": r[7], "min": r[8], "max": r[9], "median": r[10], "fecha": str(r[11]),
     }
 
 
 def get_history(usuario_id, limit=20):
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
-        """SELECT id,etiqueta,categoria,notas,entrada,cantidad,total,
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(
+        f"""SELECT id,etiqueta,categoria,notas,entrada,cantidad,total,
                   promedio,minimo,maximo,mediana,fecha
-           FROM calculos WHERE usuario_id=? ORDER BY id DESC LIMIT ?""",
+           FROM calculos WHERE usuario_id={p} ORDER BY id DESC LIMIT {p}""",
         (usuario_id, limit)
-    ).fetchall()
-    con.close()
+    )
+    rows = cur.fetchall(); cur.close(); con.close()
     return [_row_to_dict(r) for r in rows]
 
 
 def get_history_filtered(usuario_id, buscar="", categoria="", limit=20):
-    con = sqlite3.connect(DB_PATH)
-    sql = """SELECT id,etiqueta,categoria,notas,entrada,cantidad,total,
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    sql = f"""SELECT id,etiqueta,categoria,notas,entrada,cantidad,total,
                     promedio,minimo,maximo,mediana,fecha
-             FROM calculos WHERE usuario_id=?"""
+             FROM calculos WHERE usuario_id={p}"""
     params = [usuario_id]
     if buscar:
-        sql += " AND (etiqueta LIKE ? OR notas LIKE ?)"
+        sql += f" AND (etiqueta LIKE {p} OR notas LIKE {p})"
         params += [f"%{buscar}%", f"%{buscar}%"]
     if categoria:
-        sql += " AND categoria = ?"
+        sql += f" AND categoria = {p}"
         params.append(categoria)
-    sql += " ORDER BY id DESC LIMIT ?"
+    sql += f" ORDER BY id DESC LIMIT {p}"
     params.append(limit)
-    rows = con.execute(sql, params).fetchall()
-    con.close()
+    cur.execute(sql, params)
+    rows = cur.fetchall(); cur.close(); con.close()
     return [_row_to_dict(r) for r in rows]
 
 
 def get_categorias(usuario_id):
-    con = sqlite3.connect(DB_PATH)
-    rows = con.execute(
-        "SELECT DISTINCT categoria FROM calculos WHERE usuario_id=? AND categoria!='' ORDER BY categoria",
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(
+        f"SELECT DISTINCT categoria FROM calculos WHERE usuario_id={p} AND categoria!='' ORDER BY categoria",
         (usuario_id,)
-    ).fetchall()
-    con.close()
+    )
+    rows = cur.fetchall(); cur.close(); con.close()
     return [r[0] for r in rows]
 
 
 def clear_history(usuario_id):
-    con = sqlite3.connect(DB_PATH)
-    con.execute("DELETE FROM calculos WHERE usuario_id=?", (usuario_id,))
-    con.commit()
-    con.close()
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"DELETE FROM calculos WHERE usuario_id={p}", (usuario_id,))
+    con.commit(); cur.close(); con.close()
 
 
 def delete_one(record_id, usuario_id):
-    con = sqlite3.connect(DB_PATH)
-    con.execute("DELETE FROM calculos WHERE id=? AND usuario_id=?", (record_id, usuario_id))
-    con.commit()
-    con.close()
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"DELETE FROM calculos WHERE id={p} AND usuario_id={p}", (record_id, usuario_id))
+    con.commit(); cur.close(); con.close()
 
 
 def get_metrics(usuario_id):
-    con = sqlite3.connect(DB_PATH)
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
 
-    total_calcs = con.execute(
-        "SELECT COUNT(*) FROM calculos WHERE usuario_id=?", (usuario_id,)
-    ).fetchone()[0]
+    cur.execute(f"SELECT COUNT(*) FROM calculos WHERE usuario_id={p}", (usuario_id,))
+    total_calcs = cur.fetchone()[0]
 
-    avg_of_avgs = con.execute(
-        "SELECT AVG(promedio) FROM calculos WHERE usuario_id=?", (usuario_id,)
-    ).fetchone()[0] or 0
+    cur.execute(f"SELECT AVG(promedio) FROM calculos WHERE usuario_id={p}", (usuario_id,))
+    avg_of_avgs = cur.fetchone()[0] or 0
 
-    by_cat = con.execute(
-        """SELECT COALESCE(NULLIF(categoria,''),'General'), COUNT(*), ROUND(AVG(promedio),2)
-           FROM calculos WHERE usuario_id=?
+    cur.execute(
+        f"""SELECT COALESCE(NULLIF(categoria,''),'General'), COUNT(*), ROUND(AVG(promedio)::numeric,2)
+           FROM calculos WHERE usuario_id={p}
+           GROUP BY categoria ORDER BY COUNT(*) DESC""" if USE_POSTGRES else
+        f"""SELECT COALESCE(NULLIF(categoria,''),'General'), COUNT(*), ROUND(AVG(promedio),2)
+           FROM calculos WHERE usuario_id={p}
            GROUP BY categoria ORDER BY COUNT(*) DESC""",
         (usuario_id,)
-    ).fetchall()
+    )
+    by_cat = cur.fetchall()
 
-    evolution = con.execute(
-        """SELECT DATE(fecha), ROUND(AVG(promedio),2), COUNT(*)
-           FROM calculos WHERE usuario_id=?
+    cur.execute(
+        f"""SELECT DATE(fecha::timestamp), ROUND(AVG(promedio)::numeric,2), COUNT(*)
+           FROM calculos WHERE usuario_id={p}
+           GROUP BY DATE(fecha::timestamp) ORDER BY DATE(fecha::timestamp) ASC LIMIT 30""" if USE_POSTGRES else
+        f"""SELECT DATE(fecha), ROUND(AVG(promedio),2), COUNT(*)
+           FROM calculos WHERE usuario_id={p}
            GROUP BY DATE(fecha) ORDER BY DATE(fecha) ASC LIMIT 30""",
         (usuario_id,)
-    ).fetchall()
+    )
+    evolution = cur.fetchall()
 
-    best = con.execute(
-        "SELECT etiqueta, promedio FROM calculos WHERE usuario_id=? ORDER BY promedio DESC LIMIT 1",
-        (usuario_id,)
-    ).fetchone()
+    cur.execute(f"SELECT etiqueta, promedio FROM calculos WHERE usuario_id={p} ORDER BY promedio DESC LIMIT 1", (usuario_id,))
+    best = cur.fetchone()
+    cur.execute(f"SELECT etiqueta, promedio FROM calculos WHERE usuario_id={p} ORDER BY promedio ASC LIMIT 1", (usuario_id,))
+    worst = cur.fetchone()
 
-    worst = con.execute(
-        "SELECT etiqueta, promedio FROM calculos WHERE usuario_id=? ORDER BY promedio ASC LIMIT 1",
-        (usuario_id,)
-    ).fetchone()
-
-    con.close()
+    cur.close(); con.close()
     return {
         "total_calcs": total_calcs,
-        "avg_of_avgs": round(avg_of_avgs, 2),
-        "by_cat": [{"cat": r[0], "count": r[1], "avg": r[2]} for r in by_cat],
-        "evolution": [{"fecha": r[0], "avg": r[1], "count": r[2]} for r in evolution],
+        "avg_of_avgs": round(float(avg_of_avgs), 2),
+        "by_cat": [{"cat": r[0], "count": r[1], "avg": float(r[2])} for r in by_cat],
+        "evolution": [{"fecha": str(r[0]), "avg": float(r[1]), "count": r[2]} for r in evolution],
         "best":  {"etiqueta": best[0] or "Sin etiqueta",  "promedio": best[1]}  if best  else None,
         "worst": {"etiqueta": worst[0] or "Sin etiqueta", "promedio": worst[1]} if worst else None,
     }
@@ -542,12 +588,11 @@ def perfil():
             else:
                 flash(err, "error")
 
-    con = sqlite3.connect(DB_PATH)
-    total_calcs = con.execute(
-        "SELECT COUNT(*), MIN(fecha) FROM calculos WHERE usuario_id=?",
-        (session["user_id"],)
-    ).fetchone()
-    con.close()
+    con = get_conn(); cur = con.cursor()
+    p = "%s" if USE_POSTGRES else "?"
+    cur.execute(f"SELECT COUNT(*), MIN(fecha) FROM calculos WHERE usuario_id={p}", (session["user_id"],))
+    total_calcs = cur.fetchone()
+    cur.close(); con.close()
 
     return render_template("perfil.html",
         user=user, user_name=session.get("user_name", ""),
@@ -631,11 +676,11 @@ def stripe_webhook():
     elif event["type"] in ("customer.subscription.deleted", "invoice.payment_failed"):
         customer_id = event["data"]["object"].get("customer", "")
         if customer_id:
-            con = sqlite3.connect(DB_PATH)
-            row = con.execute(
-                "SELECT id FROM usuarios WHERE stripe_customer_id=?", (customer_id,)
-            ).fetchone()
-            con.close()
+            con = get_conn(); cur = con.cursor()
+            p = "%s" if USE_POSTGRES else "?"
+            cur.execute(f"SELECT id FROM usuarios WHERE stripe_customer_id={p}", (customer_id,))
+            row = cur.fetchone()
+            cur.close(); con.close()
             if row:
                 set_user_free(row[0])
 
