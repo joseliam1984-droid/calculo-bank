@@ -653,11 +653,14 @@ def api_calculos():
     return jsonify({"status": "ok", "count": len(data), "data": data})
 
 
-@app.route("/admin/activar-pro/<token>/<email>")
-def admin_activar_pro(token, email):
-    admin_token = os.environ.get("ADMIN_TOKEN", "")
-    if not admin_token or token != admin_token:
+@app.route("/admin/activar-pro/<token>")
+def admin_activar_pro(token):
+    admin_token = os.environ.get("ADMIN_TOKEN", "").strip()
+    if not admin_token or token.strip() != admin_token:
         return "No autorizado", 403
+    email = request.args.get("email", "").strip()
+    if not email:
+        return "Falta el parametro email", 400
     con = sqlite3.connect(DB_PATH)
     con.execute("UPDATE usuarios SET plan='pro' WHERE email=?", (email,))
     con.commit()
